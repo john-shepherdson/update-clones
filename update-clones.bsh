@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+
+###############################################################################
+# Script Name: update-clones.bsh
+#
+# Description:
+#   Synchronises multiple Git repositories by:
+#   - Cloning them from 3rd party GitHub locations if they do not exist locally
+#   - Detecting whether the remote uses `master` or `main`
+#   - Pulling updates from a source repository path using rebase
+#   - Force-pushing the result to a personal GitHub using --force-with-lease
+#
+# This is done so that SonarCloud can see updates made in 3rd party repos via the
+# clones that it is watching.  
+#
+# Usage:
+#   ./update-clones.bsh [--dry-run]
+#
+# Options:
+#   --dry-run    Print commands without executing them
+#
+# Requirements:
+#   - Git installed and configured
+#   - `repos` array populated with local or remote repository paths
+###############################################################################
+
+set -euo pipefail
+
+DRY_RUN=false
+SUMMARY=()
+
+# -------------------------------
+# Argument parsing
+# -------------------------------
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run)
+            DRY_RUN=true
+            ;;
+        *)
+            echo "Unknown option: $arg"
+            exit 1
+            ;;
+    esac
+done
+
+# -------------------------------
+# Utility functions
+# -------------------------------
+
+run_cmd() {
+    if [ "$DRY_RUN" = "true" ]; then
+        echo "[DRY RUN] $*"
+    else
+        "$@"
+    fi
+}
+
+get_default_branch() {
+    if git show-ref --verify --quiet refs/remotes/origin/master; then
+        echo "master"
+    elif git show-ref --verify --quiet refs/remotes/origin/main; then
+        echo "main"
+    else
+        return 1
+    fi
+}
+
+# List last updated on 6 January 2026
+repos=(
+"https://code-repo.d4science.org/D-Net/dnet-hadoop"
+"https://code-repo.d4science.org/MaDgIK/eosc-explore"
+"https://code-repo.d4science.org/MaDgIK/eosc-metadata-harvester"
+"https://code-repo.d4science.org/MaDgIK/uoa-repository-manager-service"
+"https://code-repo.d4science.org/MaDgIK/uoa-repository-manager-ui"
+"https://code-repo.d4science.org/michele.artini/simpleOaiCollectorService"
+"https://github.com/apel/apel"
+"https://github.com/ARGOeu/argo-acc-library"
+"https://github.com/ARGOeu/argo-accounting"
+"https://github.com/ARGOeu/argo-alert"
+"https://github.com/ARGOeu/argo-ams-library"
+"https://github.com/ARGOeu/argo-connectors"
+"https://github.com/ARGOeu/argo-messaging"
+"https://github.com/ARGOeu/argo-mon-library"
+"https://github.com/ARGOeu/argo-monitoring"
+"https://github.com/ARGOeu/argo-scg"
+"https://github.com/ARGOeu/argo-web-api"
+"https://github.com/ARGOeu/poem-2"
+"https://github.com/cyfronet-fid/eosc-search-service"
+"https://github.com/cyfronet-fid/eosc-user-dashboard"
+"https://github.com/cyfronet-fid/marketplace"
+"https://github.com/cyfronet-fid/whitelabel-marketplace"
+"https://github.com/EGI-Federation/eosc-data-transfer"
+"https://github.com/eosc-kc/keycloak"
+"https://github.com/grycap/apricotlab"
+"https://github.com/grycap/im"
+"https://github.com/grycap/im-dashboard"
+"https://github.com/grycap/im-oaipmh-client"
+"https://github.com/IdentityPython/SATOSA"
+"https://github.com/madgeek-arc/resource-catalogue"
+"https://github.com/madgeek-arc/resource-catalogue-ui-eosc"
+"https://github.com/micheleartini/dnet-oai-server"
+"https://github.com/n8n-io/n8n"
+"https://github.com/openaire/EPrints-OAPiwik"
+"https://github.com/openaire/Generic-Matomo-Tracker"
+"https://github.com/openaire/iis"
+"https://github.com/pidconsortium/EPIC-API-v2"
+"https://github.com/rciam/rciam-federation-registry"
+"https://github.com/tdviet/fedcloudclient"
+"https://gitlab.cern.ch/batistal/eosc-data-transfer-client"
+"https://github.com/jsc-jupyter/jupyterlab-data-mount"
+)
+
+ensure_repo_exists() {
+    local repo="$1"
+
+    if [ ! -d "$repo" ]; then
+        echo "Cloning $repo from GitHub"
+        run_cmd git clone "https://github.com/john-shepherdson/$repo.git"
+        SUMMARY+=("$repo: cloned")
+    fi
+}
+
+mark_repo_safe() {
+    local repo="$1"
+    local path="/Users/johnshepherdson/GitHub/$repo"
+
+    run_cmd git config --global --add safe.directory "$path"
+}
+
+# -------------------------------
+# Repo sync logic
+# -------------------------------
+
+sync_repo() {
+    local repo_path="$1"
+    local repo branch status="updated"
+
+    repo=$(basename "$repo_path")
+    echo "--------------------------------------------------------------"
+    echo "Processing $repo"
+
+    ensure_repo_exists "$repo"
+
+    if ! cd "$repo"; then
+        SUMMARY+=("$repo: failed (cd error)")
+        return
+    fi
+
+    branch=$(get_default_branch) || {
+        echo "ERROR: No master/main branch found"
+        SUMMARY+=("$repo: skipped (no branch)")
+        cd ..
+        return
+    }
+
+    echo "Using branch: $branch"
+
+    mark_repo_safe "$repo"
+
+    run_cmd git config pull.rebase true
+    run_cmd git pull "$repo_path" "$branch"
+    run_cmd git push --force-with-lease "https://github.com/john-shepherdson/$repo.git"
+
+    cd ..
+    SUMMARY+=("$repo: $status")
+}
+
+# -------------------------------
+# Main loop
+# -------------------------------
+
+for repo_path in "${repos[@]}"; do
+    sync_repo "$repo_path"
+done
+
+# -------------------------------
+# Summary
+# -------------------------------
+
+echo
+echo "================ Sync Summary ================"
+for line in "${SUMMARY[@]}"; do
+    echo " - $line"
+done
+echo "=============================================="
+
+if [ "$DRY_RUN" = "true" ]; then
+    echo "NOTE: Dry-run mode enabled — no changes were made."
+fi

@@ -1,4 +1,4 @@
-# UPDATE_CLONES
+# UPDATE-CLONES
 
 This repository contains a script to synchronises multiple Git repositories
 for the purposes of SQA via SonarCloud. This is done by:
@@ -15,7 +15,7 @@ for the purposes of SQA via SonarCloud. This is done by:
 
 ## Usage
 
-./sync-repos.sh [--dry-run]
+./update-clones.bsh [--dry-run]
 
 ## Options
 
